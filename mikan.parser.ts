@@ -23,11 +23,18 @@ import { FeedEntry } from '@extractus/feed-extractor';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs/promises';
+import fetch from 'node-fetch';
+import { HttpsProxyAgent } from 'https-proxy-agent';
+import { ConfigService } from '@nestjs/config';
+import process from 'node:process';
 
 @MinaPlayPluginParser()
 export class MikanParser implements PluginSourceParser, MinaPlayPluginHooks {
+  agent?: HttpsProxyAgent<string>;
+
   public static CONFIG_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'mikan.json');
   private base = 'https://mikanime.tv';
+  private static IMG_BASE = 'https://mikanani.me';
   private imageProxy: string | undefined = undefined;
 
   async setBase(base: string) {
@@ -79,7 +86,7 @@ export class MikanParser implements PluginSourceParser, MinaPlayPluginHooks {
 
   private getImageUrl(target: string) {
     const url = new URL(target);
-    const link = `${url.origin}${url.pathname}`;
+    const link = `${MikanParser.IMG_BASE}${url.pathname}`;
     return this.imageProxy ? `${this.imageProxy}?url=${link}` : link;
   }
 
@@ -87,15 +94,22 @@ export class MikanParser implements PluginSourceParser, MinaPlayPluginHooks {
     @InjectRepository(Episode) private episodeRepository: Repository<Episode>,
     @InjectRepository(Rule) private ruleRepository: Repository<Rule>,
     private pluginService: PluginService,
-  ) {}
+    configService: ConfigService,
+  ) {
+    const proxy = configService.get('APP_HTTP_PROXY') || process.env.HTTP_PROXY;
+    if (proxy) {
+      this.agent = new HttpsProxyAgent(proxy);
+    }
+  }
 
   async getSeriesFromBangumi(id: string): Promise<MinaPlayPluginSourceSeries> {
     const response = await fetch(`https://api.bgm.tv/v0/subjects/${id}`, {
+      agent: this.agent,
       headers: {
         'User-Agent': 'nepsyn/minaplay-plugin-mikan',
       },
     });
-    const item: BgmSubject = await response.json();
+    const item = (await response.json()) as BgmSubject;
     return {
       id: item.id,
       name: item.name_cn || item.name,
@@ -115,12 +129,13 @@ export class MikanParser implements PluginSourceParser, MinaPlayPluginHooks {
     const response = await fetch(
       `https://api.bgm.tv/v0/episodes?subject_id=${id}&type=0&offset=${(page ?? 0) * (size ?? 100)}&limit=${size ?? 100}`,
       {
+        agent: this.agent,
         headers: {
           'User-Agent': 'nepsyn/minaplay-plugin-mikan',
         },
       },
     );
-    const result: { data: BgmEpisode[]; total: number } = await response.json();
+    const result = (await response.json()) as { data: BgmEpisode[]; total: number };
     return new ApiPaginationResultDto(
       result.data.map((item) => ({
         title: item.name_cn || item.name,
@@ -134,7 +149,8 @@ export class MikanParser implements PluginSourceParser, MinaPlayPluginHooks {
   }
 
   async getCalendar() {
-    const { window } = await JSDOM.fromURL(this.base);
+    const html = await fetch(this.base, { agent: this.agent });
+    const { window } = new JSDOM(await html.arrayBuffer());
     const calendarEls = window.document.querySelectorAll('.sk-bangumi');
     const calendar: MinaPlayPluginSourceCalendarDay[] = [];
     for (const calendarEl of calendarEls) {
@@ -166,12 +182,18 @@ export class MikanParser implements PluginSourceParser, MinaPlayPluginHooks {
     return calendar.sort((a, b) => a.weekday - b.weekday);
   }
 
-  async getSeriesById(id: string) {
-    const { window } = await JSDOM.fromURL(`${this.base}/Home/Bangumi/${id}`);
+  async getWindowAndBgmById(id: string | number) {
+    const html = await fetch(`${this.base}/Home/Bangumi/${id}`, { agent: this.agent });
+    const { window } = new JSDOM(await html.arrayBuffer());
     const bangumiHref = [...window.document.querySelectorAll('.w-other-c').values()]
       .find((el) => el.getAttribute('href')?.match(/bgm\.tv\/subject\/\d+/))
       .getAttribute('href');
     const [, bangumiId] = bangumiHref.match(/bgm\.tv\/subject\/(\d+)/);
+    return [window, bangumiId] as const;
+  }
+
+  async getSeriesById(id: string | number) {
+    const [, bangumiId] = await this.getWindowAndBgmById(id);
     const series = await this.getSeriesFromBangumi(bangumiId);
     return {
       ...series,
@@ -180,11 +202,7 @@ export class MikanParser implements PluginSourceParser, MinaPlayPluginHooks {
   }
 
   async getEpisodesBySeriesId(id: string | number, page?: number, size?: number) {
-    const { window } = await JSDOM.fromURL(`${this.base}/Home/Bangumi/${id}`);
-    const bangumiHref = [...window.document.querySelectorAll('.w-other-c').values()]
-      .find((el) => el.getAttribute('href')?.match(/bgm\.tv\/subject\/\d+/))
-      .getAttribute('href');
-    const [, bangumiId] = bangumiHref.match(/bgm\.tv\/subject\/(\d+)/);
+    const [window, bangumiId] = await this.getWindowAndBgmById(id);
     const episodes = await this.getEpisodesFromBangumi(bangumiId, page, size);
     const downloadUrlMap = new Map<number, string>();
     window.document.querySelectorAll('a.magnet-link-wrap').forEach((el) => {
@@ -201,7 +219,10 @@ export class MikanParser implements PluginSourceParser, MinaPlayPluginHooks {
   }
 
   async searchSeries(keyword: string) {
-    const { window } = await JSDOM.fromURL(`${this.base}/Home/Search?searchstr=${encodeURIComponent(keyword)}`);
+    const html = await fetch(`${this.base}/Home/Search?searchstr=${encodeURIComponent(keyword)}`, {
+      agent: this.agent,
+    });
+    const { window } = new JSDOM(await html.arrayBuffer());
     const bangumiEls = window.document.querySelectorAll('.an-ul > li');
     const items: MinaPlayPluginSourceSeries[] = [];
     for (const bangumiEl of bangumiEls) {
