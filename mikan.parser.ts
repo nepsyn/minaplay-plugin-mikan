@@ -2,23 +2,20 @@ import {
   ApiPaginationResultDto,
   Episode,
   File,
-  getMinaPlayPluginParserMetadata,
   MinaPlayPluginHooks,
   MinaPlayPluginParser,
   MinaPlayPluginSource,
   MinaPlayPluginSourceCalendarDay,
   MinaPlayPluginSourceEpisode,
   MinaPlayPluginSourceSeries,
-  PluginService,
   PluginSourceParser,
-  Rule,
+  RuleEntryValidatorContext,
+  RuleFileDescriberContext,
   RuleFileDescriptor,
 } from '@minaplay/server';
 import { JSDOM } from 'jsdom';
 import { BgmEpisode, BgmSubject } from './bangumi.interface.js';
 import aniep from 'aniep';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Like, Repository } from 'typeorm';
 import { FeedEntry } from '@extractus/feed-extractor';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,9 +24,12 @@ import fetch from 'node-fetch';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { ConfigService } from '@nestjs/config';
 import process from 'node:process';
+import { Repository } from 'typeorm';
+import { InjectRepository } from '@nestjs/typeorm';
 
 @MinaPlayPluginParser()
 export class MikanParser implements PluginSourceParser, MinaPlayPluginHooks {
+  private cache = new Map<string | number, Set<string>>();
   agent?: HttpsProxyAgent<string>;
 
   public static CONFIG_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'mikan.json');
@@ -68,20 +68,6 @@ export class MikanParser implements PluginSourceParser, MinaPlayPluginHooks {
         this.imageProxy = config.imageProxy;
       }
     } catch {}
-
-    const rules = await this.ruleRepository.findBy({
-      parserMeta: Like(`mikan-${MikanParser.name}-%`),
-    });
-    const tasks = rules.map((rule) =>
-      (async () => {
-        const id = rule.parserMeta.match(/(\d+)/g)?.[0];
-        if (id) {
-          const series = await this.getSeriesById(id);
-          this.initDelegateForSeries(series);
-        }
-      })(),
-    );
-    await Promise.allSettled(tasks);
   }
 
   private getImageUrl(target: string) {
@@ -91,9 +77,7 @@ export class MikanParser implements PluginSourceParser, MinaPlayPluginHooks {
   }
 
   constructor(
-    @InjectRepository(Episode) private episodeRepository: Repository<Episode>,
-    @InjectRepository(Rule) private ruleRepository: Repository<Rule>,
-    private pluginService: PluginService,
+    @InjectRepository(Episode) private episodeRepo: Repository<Episode>,
     configService: ConfigService,
   ) {
     const proxy = configService.get('APP_HTTP_PROXY') || process.env.HTTP_PROXY;
@@ -249,53 +233,48 @@ export class MikanParser implements PluginSourceParser, MinaPlayPluginHooks {
     };
   }
 
-  private initDelegateForSeries(series: MinaPlayPluginSourceSeries) {
-    const repo = this.episodeRepository;
-
-    @MinaPlayPluginParser({
-      name: `bangumi-${series.id}`,
-    })
-    class MikanParserDelegate implements PluginSourceParser {
-      private cache: string[] = [];
-
-      async validateFeedEntry(entry: FeedEntry): Promise<boolean> {
-        let no = aniep(entry.title);
-        no = Array.isArray(no) ? undefined : String(no).padStart(2, '0');
-        if (typeof no === 'string' && !this.cache.includes(no)) {
-          this.cache.push(no);
-          const episode = await repo.findOneBy({
-            no,
-            series: { name: series.name, season: series.season },
-          });
-          return !episode;
-        }
-        return false;
-      }
-
-      describeDownloadItem(entry: FeedEntry, file: File, _: File[]): RuleFileDescriptor {
-        return {
-          series: {
-            name: series.name,
-            season: series.season,
-          },
-          episode: {
-            title: file.name,
-            no: String(aniep(entry.title)),
-            pubAt: entry.published && new Date(entry.published),
-          },
-          overwriteEpisode: true,
-        };
-      }
-    }
-
-    this.pluginService.getControlById('mikan').parserMap.set(`bangumi-${series.id}`, {
-      ...getMinaPlayPluginParserMetadata(MikanParserDelegate),
-      service: new MikanParserDelegate(),
-    });
+  async buildRuleCodeOfSeries(series: MinaPlayPluginSourceSeries): Promise<string> {
+    return (
+      `export default {` +
+      `  validate: 'mikan:${MikanParser.name}',` +
+      `  describe: 'mikan:${MikanParser.name}',` +
+      `  meta: { name: ${JSON.stringify(series.name)}, session: ${JSON.stringify(series.season)}, id: ${JSON.stringify(series.id)} } }`
+    );
   }
 
-  async buildRuleCodeOfSeries(series: MinaPlayPluginSourceSeries): Promise<string> {
-    this.initDelegateForSeries(series);
-    return `export default { validate: 'mikan:bangumi-${series.id}', describe: 'mikan:bangumi-${series.id}' }`;
+  async validateFeedEntry(entry: FeedEntry, ctx: RuleEntryValidatorContext): Promise<boolean> {
+    let no = aniep(entry.title);
+    no = Array.isArray(no) ? undefined : String(no).padStart(2, '0');
+    const id: string | number = ctx.meta['id'];
+    if (!id || !ctx.meta['name']) {
+      return false;
+    }
+    if (!this.cache.has(id)) {
+      this.cache.set(id, new Set());
+    }
+    if (typeof no === 'string' && !this.cache.get(id).has(no)) {
+      this.cache.get(id).add(no);
+      const episode = await this.episodeRepo.findOneBy({
+        no,
+        series: { name: ctx.meta['name'], ...(ctx.meta['session'] ? { session: ctx.meta['session'] } : undefined) },
+      });
+      return !episode;
+    }
+    return false;
+  }
+
+  describeDownloadItem(entry: FeedEntry, file: File, ctx: RuleFileDescriberContext): RuleFileDescriptor {
+    return {
+      series: {
+        name: ctx.meta['name'],
+        season: ctx.meta['session'],
+      },
+      episode: {
+        title: file.name,
+        no: String(aniep(entry.title)),
+        pubAt: entry.published && new Date(entry.published),
+      },
+      overwriteEpisode: true,
+    };
   }
 }

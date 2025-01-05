@@ -1,4 +1,4 @@
-import { Episode, MinaPlayPlugin, Rule } from '@minaplay/server';
+import { Episode, MinaPlayPlugin } from '@minaplay/server';
 import { MikanCommand } from './mikan.command.js';
 import { MikanParser } from './mikan.parser.js';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -10,12 +10,12 @@ const icon =
   id: 'mikan',
   icon,
   version: '1.0.1',
-  supportVersion: '^0.2.2',
+  supportVersion: '^0.2.5',
   description: 'Mikan support in MinaPlay',
   author: 'MinaPlay',
   repo: 'https://github.com/nepsyn/minaplay-plugin-mikan',
   license: 'AGPL-3.0',
-  imports: [TypeOrmModule.forFeature([Episode, Rule])],
+  imports: [TypeOrmModule.forFeature([Episode])],
   providers: [MikanCommand, MikanParser],
 })
 export class MikanPlugin {}
