@@ -41,4 +41,14 @@ export class MikanCommand {
     await this.parser.setImageProxy(url);
     return new Text(`Change image proxy url to: ${url}`, Text.Colors.SUCCESS);
   }
+
+  @MinaPlayCommand('clean-cache', {
+    aliases: ['cc'],
+    description: 'clean download cache',
+    parent: () => MikanCommand.prototype.handleMikan,
+  })
+  async handleCleanCache() {
+    this.parser.cleanCache();
+    return new Text(`Download cache cleaned`, Text.Colors.SUCCESS);
+  }
 }

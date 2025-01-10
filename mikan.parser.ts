@@ -47,6 +47,10 @@ export class MikanParser implements PluginSourceParser, MinaPlayPluginHooks {
     await this.saveConfig();
   }
 
+  cleanCache() {
+    this.cache.clear();
+  }
+
   async saveConfig() {
     await fs.writeFile(
       MikanParser.CONFIG_PATH,
@@ -234,12 +238,7 @@ export class MikanParser implements PluginSourceParser, MinaPlayPluginHooks {
   }
 
   async buildRuleCodeOfSeries(series: MinaPlayPluginSourceSeries): Promise<string> {
-    return (
-      `export default {` +
-      `  validate: 'mikan:${MikanParser.name}',` +
-      `  describe: 'mikan:${MikanParser.name}',` +
-      `  meta: { name: ${JSON.stringify(series.name)}, session: ${JSON.stringify(series.season)}, id: ${JSON.stringify(series.id)} } }`
-    );
+    return MIKAN_RULE_TEMPLATE(series.id, series.name, series.season);
   }
 
   async validateFeedEntry(entry: FeedEntry, ctx: RuleEntryValidatorContext): Promise<boolean> {
@@ -251,6 +250,14 @@ export class MikanParser implements PluginSourceParser, MinaPlayPluginHooks {
     }
     if (!this.cache.has(id)) {
       this.cache.set(id, new Set());
+    }
+    const include: string[] = ctx.meta['include'] ?? [];
+    if (include.some((v) => !entry.title.includes(v))) {
+      return false;
+    }
+    const exclude: string[] = ctx.meta['exclude'] ?? [];
+    if (exclude.some((v) => entry.title.includes(v))) {
+      return false;
     }
     if (typeof no === 'string' && !this.cache.get(id).has(no)) {
       this.cache.get(id).add(no);
@@ -264,6 +271,8 @@ export class MikanParser implements PluginSourceParser, MinaPlayPluginHooks {
   }
 
   describeDownloadItem(entry: FeedEntry, file: File, ctx: RuleFileDescriberContext): RuleFileDescriptor {
+    let no = aniep(entry.title);
+    no = Array.isArray(no) ? undefined : String(no).padStart(2, '0');
     return {
       series: {
         name: ctx.meta['name'],
@@ -271,10 +280,22 @@ export class MikanParser implements PluginSourceParser, MinaPlayPluginHooks {
       },
       episode: {
         title: file.name,
-        no: String(aniep(entry.title)),
+        no,
         pubAt: entry.published && new Date(entry.published),
       },
       overwriteEpisode: true,
     };
   }
 }
+
+const MIKAN_RULE_TEMPLATE = (id: string | number, name: string, season: string | undefined) => `export default {
+  validate: 'mikan:${MikanParser.name}',
+  describe: 'mikan:${MikanParser.name}',
+  meta: {
+    id: ${JSON.stringify(id)},
+    name: ${JSON.stringify(name)},
+    session: ${JSON.stringify(season)},
+    include: [],
+    exclude: ["CR"],
+  },
+}`;
