@@ -9,7 +9,7 @@ const icon =
 @MinaPlayPlugin({
   id: 'mikan',
   icon,
-  version: '1.0.3',
+  version: '1.0.4',
   supportVersion: '^0.2.5',
   description: 'Mikan support in MinaPlay',
   author: 'MinaPlay',

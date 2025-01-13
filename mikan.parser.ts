@@ -260,11 +260,13 @@ export class MikanParser implements PluginSourceParser, MinaPlayPluginHooks {
       return false;
     }
     if (typeof no === 'string' && !this.cache.get(id).has(no)) {
-      this.cache.get(id).add(no);
       const episode = await this.episodeRepo.findOneBy({
         no,
         series: { name: ctx.meta['name'], ...(ctx.meta['session'] ? { session: ctx.meta['session'] } : undefined) },
       });
+      if (episode) {
+        this.cache.get(id).add(no);
+      }
       return !episode;
     }
     return false;
@@ -296,6 +298,6 @@ const MIKAN_RULE_TEMPLATE = (id: string | number, name: string, season: string |
     name: ${JSON.stringify(name)},
     session: ${JSON.stringify(season)},
     include: [],
-    exclude: ["CR"],
+    exclude: ["CR", "B-Global"],
   },
 }`;
