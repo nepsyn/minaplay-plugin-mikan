@@ -1,11 +1,18 @@
 import { MinaPlayCommand, MinaPlayCommandArgument, MinaPlayListenerInject, Text } from '@minaplay/server';
 import { Injectable } from '@nestjs/common';
 import { Command } from 'commander';
-import { MikanParser } from './mikan.parser.js';
+import { MikanConfig, MikanParser } from './mikan.parser.js';
 
 @Injectable()
 export class MikanCommand {
   constructor(private parser: MikanParser) {}
+
+  private static CONFIG_MAP: Record<string, keyof MikanConfig> = {
+    'image-proxy': 'imageProxy',
+    base: 'base',
+    include: 'include',
+    exclude: 'exclude',
+  };
 
   @MinaPlayCommand('mikan', {
     description: 'Mikan support in MinaPlay',
@@ -14,32 +21,86 @@ export class MikanCommand {
     return program.helpInformation();
   }
 
-  @MinaPlayCommand('set-base', {
-    description: 'set base url of mikan',
+  @MinaPlayCommand('config', {
+    description: 'Show configs of plugin',
     parent: () => MikanCommand.prototype.handleMikan,
   })
-  async handleSetBase(
-    @MinaPlayCommandArgument('<url>', {
-      description: 'base url',
-    })
-    url: string,
-  ) {
-    await this.parser.setBase(url.endsWith('/') ? url.slice(0, url.length - 1) : url);
-    return new Text(`Change base url to: ${url}`, Text.Colors.SUCCESS);
+  handleConfig(@MinaPlayListenerInject() program: Command) {
+    return program.helpInformation();
   }
 
-  @MinaPlayCommand('set-image-proxy', {
-    description: 'set image proxy url of mikan',
-    parent: () => MikanCommand.prototype.handleMikan,
+  @MinaPlayCommand('list', {
+    description: 'show configs',
+    parent: () => MikanCommand.prototype.handleConfig,
   })
-  async handleSetImageProxy(
-    @MinaPlayCommandArgument('<url>', {
-      description: 'image proxy url',
+  async handleConfigList() {
+    return Object.entries(MikanCommand.CONFIG_MAP)
+      .map(([label, key]) => `${label.padEnd(12, ' ')} : ${JSON.stringify(this.parser.getConfig()[key])}`)
+      .join('\n');
+  }
+
+  @MinaPlayCommand('set', {
+    description: 'set configs',
+    parent: () => MikanCommand.prototype.handleConfig,
+  })
+  async handleConfigSet(
+    @MinaPlayCommandArgument('<key>', {
+      description: 'config key',
+      factory: (arg) => arg.choices(Object.keys(MikanCommand.CONFIG_MAP)),
     })
-    url: string,
+    key: keyof typeof MikanCommand.CONFIG_MAP,
+    @MinaPlayCommandArgument('<args...>', {
+      description: 'args',
+    })
+    args: string[],
   ) {
-    await this.parser.setImageProxy(url);
-    return new Text(`Change image proxy url to: ${url}`, Text.Colors.SUCCESS);
+    if (!Object.keys(MikanCommand.CONFIG_MAP).includes(key)) {
+      return new Text(`No config named '${key}'`, Text.Colors.ERROR);
+    }
+    if (args.length < 1) {
+      return new Text(`Invalid args count`, Text.Colors.ERROR);
+    }
+    if (['base', 'imageProxy'].includes(key)) {
+      await this.parser.setConfig(MikanCommand.CONFIG_MAP[key], args[0]);
+    } else if (['include', 'exclude'].includes(key)) {
+      await this.parser.setConfig(MikanCommand.CONFIG_MAP[key], args);
+    }
+    return new Text(JSON.stringify(this.parser.getConfig()[MikanCommand.CONFIG_MAP[key]]));
+  }
+
+  @MinaPlayCommand('get', {
+    description: 'get config',
+    parent: () => MikanCommand.prototype.handleConfig,
+  })
+  async handleConfigGet(
+    @MinaPlayCommandArgument('<key>', {
+      description: 'config key',
+      factory: (arg) => arg.choices(Object.keys(MikanCommand.CONFIG_MAP)),
+    })
+    key: keyof typeof MikanCommand.CONFIG_MAP,
+  ) {
+    if (!Object.keys(MikanCommand.CONFIG_MAP).includes(key)) {
+      return new Text(`No config named '${key}'`, Text.Colors.ERROR);
+    }
+    return new Text(JSON.stringify(this.parser.getConfig()[MikanCommand.CONFIG_MAP[key]]));
+  }
+
+  @MinaPlayCommand('unset', {
+    description: 'unset configs(restore default)',
+    parent: () => MikanCommand.prototype.handleConfig,
+  })
+  async handleConfigUnset(
+    @MinaPlayCommandArgument('<key>', {
+      description: 'config key',
+      factory: (arg) => arg.choices(Object.keys(MikanCommand.CONFIG_MAP)),
+    })
+    key: keyof typeof MikanCommand.CONFIG_MAP,
+  ) {
+    if (!Object.keys(MikanCommand.CONFIG_MAP).includes(key)) {
+      return new Text(`No config named '${key}'`, Text.Colors.ERROR);
+    }
+    await this.parser.setConfig(MikanCommand.CONFIG_MAP[key], MikanParser.DEFAULT_CONFIG[MikanCommand.CONFIG_MAP[key]]);
+    return new Text(JSON.stringify(this.parser.getConfig()[MikanCommand.CONFIG_MAP[key]]));
   }
 
   @MinaPlayCommand('clean-cache', {
