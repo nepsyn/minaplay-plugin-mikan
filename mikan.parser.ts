@@ -263,7 +263,7 @@ export class MikanParser implements PluginSourceParser, MinaPlayPluginHooks {
       this.cache.get(id).add(no);
       const episode = await this.episodeRepo.findOneBy({
         no,
-        series: { name: ctx.meta['name'], ...(ctx.meta['session'] ? { session: ctx.meta['session'] } : undefined) },
+        series: { name: ctx.meta['name'], ...(ctx.meta['season'] ? { season: ctx.meta['season'] } : undefined) },
       });
       return !episode;
     }
@@ -276,7 +276,7 @@ export class MikanParser implements PluginSourceParser, MinaPlayPluginHooks {
     return {
       series: {
         name: ctx.meta['name'],
-        season: ctx.meta['session'],
+        season: ctx.meta['season'],
       },
       episode: {
         title: file.name,
@@ -294,7 +294,7 @@ const MIKAN_RULE_TEMPLATE = (id: string | number, name: string, season: string |
   meta: {
     id: ${JSON.stringify(id)},
     name: ${JSON.stringify(name)},
-    session: ${JSON.stringify(season)},
+    season: ${JSON.stringify(season)},
     include: [],
     exclude: ["CR"],
   },
