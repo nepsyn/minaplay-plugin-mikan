@@ -44,7 +44,7 @@ export class MikanParser implements PluginSourceParser, MinaPlayPluginHooks {
     base: 'https://mikanime.tv',
     imageProxy: undefined,
     include: [],
-    exclude: ['CR'],
+    exclude: ['CR', 'B-Global'],
   };
   private config: MikanConfig = Object.assign({}, MikanParser.DEFAULT_CONFIG);
   private static IMG_BASE = 'https://mikanani.me';
