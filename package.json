@@ -1,6 +1,6 @@
 {
   "name": "minaplay-plugin-mikan",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Mikan plugin for minaplay",
   "type": "module",
   "scripts": {
